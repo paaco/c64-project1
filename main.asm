@@ -2,7 +2,7 @@
 ;
 ;
 
-; standard memory layout: VIC bank 0 (0000-4000), screen at 0400, code vanaf 0800, music op 1000
+; standard memory layout: VIC bank 0 (0000-4000), screen at 0400, code vanaf 0800, music op 1000-2000 (onder ROM font)
 ; beter wellicht VIC bank 1 (4000-8000)
 ;
 
@@ -36,7 +36,7 @@ start:
 		sta $d022
 		lda #1		; MC kleur 2
 		sta $d023
-		lda #%00011000	; screen $0400 (per $400), charset $2000 (per $800) - op $1000 staat ALTIJD charrom
+		lda #%00011000	; screen $0400 (bits 7-4; per $400), charset $2000 (bits 3-1; per $800) - op $1000 staat ALTIJD charrom
 		sta $d018	; screen + charset
 		lda #$18
 		sta $d016	; multicolor / smoothscroll X

@@ -31,7 +31,7 @@ public class Sprite2asm {
     }
 
     private int pixel_width = 1; // default to hires
-    private int bgIndex = 0;     // black
+    private int bgIndex = 0;     // black, but actually defaults to transparent index
     private int mc1Index = 1;    // white
     private int mc2Index = 2;    // red
 
@@ -88,20 +88,21 @@ public class Sprite2asm {
 
     private void run() throws IOException {
         File f = new File(srcfilename);
-        updateColorMapping(srcfilename);
         BufferedImage image = ImageIO.read(f);
         int height = image.getHeight();
         int width = image.getWidth();
-        if (height % 21 != 0 || width % 24 != 0) {
-            System.err.println("ERROR: image should be a multiple of 24x21");
-        } else if (!(image.getColorModel() instanceof IndexColorModel)) {
+        if (!(image.getColorModel() instanceof IndexColorModel)) {
             System.err.println("ERROR: image should have palette");
         } else {
+            // pick bg from transparent color index
+            bgIndex = ((IndexColorModel)image.getColorModel()).getTransparentPixel();
+            updateColorMapping(srcfilename);
+
             System.out.println("; Sprite2asm " + f.getName() + " " + DateFormat.getDateTimeInstance().format(new Date()));
             Raster pixels = image.getData();
             int nr = 0;
-            for (int sy = 0; sy < height; sy += 21) {
-                for (int sx = 0; sx < width; sx += 24) {
+            for (int sy = 0; sy + 21 <= height; sy += 21) {
+                for (int sx = 0; sx + 24 <= width; sx += 24) {
                     byte[] sprite = extractSprite(pixels, sx, sy);
                     if (notEmpty(sprite)) {
                         StringBuilder sb = new StringBuilder();

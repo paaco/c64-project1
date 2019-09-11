@@ -14,7 +14,7 @@ import java.util.regex.Pattern;
 public class Sprite2asm {
 
     // text output: ACME style uses !byte, KickAssembler expects .byte, DreamAss uses .db
-    private static final String PREFIX = "!byte";
+    private static final String PREFIX = "!byte ";
 
     // color specifiers
     private static final Pattern BGPATTERN = Pattern.compile("-bg([0-9a-fA-F])"); // -bgX bg (forces hires)
@@ -27,7 +27,9 @@ public class Sprite2asm {
     private final String srcfilename;
 
     public static void main(String[] args) throws Exception {
-        new Sprite2asm(args[0]).run();
+        for (String arg : args) {
+            new Sprite2asm(arg).run();
+        }
     }
 
     private int pixel_width = 1; // default to hires
@@ -37,8 +39,7 @@ public class Sprite2asm {
 
     // pixelWidth 1: bgIndex is '0', any other color is '1' (sprite color)
     // pixelWidth 2: bgIndex is '00'(0), mc1Index is '01'(1), mc2Index is '11'(3), any other is '10'(2) (sprite color)
-    private byte[] extractSprite(Raster pixels, int xoff, int yoff) {
-        byte[] buf = new byte[64];
+    private void extractSprite(Raster pixels, int xoff, int yoff, byte buf[]) {
         int bufoffset = 0;
         int bitcount = 0;
         byte b = 0;
@@ -68,7 +69,40 @@ public class Sprite2asm {
                 }
             }
         }
-        return buf;
+    }
+
+    // pixelWidth 1: bgIndex is '0', any other color is '1' (hires color)
+    // pixelWidth 2: bgIndex is '00'(0), mc1Index is '01'(1), mc2Index is '11'(3), any other is '10'(2) (sprite color)
+    private void extractChar(Raster pixels, int xoff, int yoff, byte[] buf) {
+        int bufoffset = 0;
+        int bitcount = 0;
+        byte b = 0;
+        for (int y = 0; y < 8; y++) {
+            for (int x = 0; x < 8; x += pixel_width) {
+                int pixel = pixels.getSample(x + xoff, y + yoff, 0);
+                b <<= pixel_width;
+
+                if (pixel_width == 1) {
+                    // hires
+                    if (pixel == bgIndex) b |= 0;
+                    else b |= 1;
+                } else {
+                    // mc char
+                    if (pixel == bgIndex) b |= 0;
+                    else if (pixel == mc1Index) b |= 1;
+                    else if (pixel == mc2Index) b |= 2;
+                    else b |= 3;
+                }
+
+                // flush
+                bitcount += pixel_width;
+                if (bitcount == 8) {
+                    buf[bufoffset++] = b;
+                    bitcount = 0;
+                    b = 0;
+                }
+            }
+        }
     }
 
     // extract color format from string
@@ -100,19 +134,47 @@ public class Sprite2asm {
 
             System.out.println("; Sprite2asm " + f.getName() + " " + DateFormat.getDateTimeInstance().format(new Date()));
             Raster pixels = image.getData();
+
+            // convert characters with charset and charmap
+            // TODO: colormap from extractChar?
+            byte[] charset = new byte[8 * 256];
+            int charsetSize = 0;
+            byte[] charmap = new byte[1000]; // max full screen
+            int charmapSize = 0;
+            byte[] curChar = new byte[8];
+            for (int cy = 0; cy + 8 <= height; cy += 8) {
+                for (int cx = 0; cx + 8 <= width; cx += 8) {
+                    extractChar(pixels, cx, cy, curChar);
+                    int ch = findInCharset(curChar, charset, charsetSize);
+                    if (ch == charsetSize) { // not found
+                        System.arraycopy(curChar, 0, charset, charsetSize * 8, 8);
+                        charsetSize++;
+                    }
+                    charmap[charmapSize++] = (byte)ch;
+                }
+            }
+            StringBuilder sb = new StringBuilder();
+            sb.append(String.format("; charset %d uniques\n", charsetSize));
+            appendByteRows(sb, charset, charsetSize * 8, 8);
+            sb.append(String.format("; charmap %d bytes (%d x %d)\n", charmapSize, width / 8, height / 8));
+            appendByteRows(sb, charmap, charmapSize, width / 8);
+            System.out.print(sb);
+/*
+            // convert sprites
             int nr = 0;
+            byte[] sprite = new byte[64];
             for (int sy = 0; sy + 21 <= height; sy += 21) {
                 for (int sx = 0; sx + 24 <= width; sx += 24) {
-                    byte[] sprite = extractSprite(pixels, sx, sy);
+                    extractSprite(pixels, sx, sy, sprite);
                     if (notEmpty(sprite)) {
                         StringBuilder sb = new StringBuilder();
                         sb.append(String.format("; %d (%d,%d)\n", nr, sx, sy));
-                        appendSprite(sb, sprite);
+                        appendByteRows(sb, sprite, 64, 21);
                         System.out.print(sb);
                         nr++;
                     }
                 }
-            }
+            }*/
         }
     }
 
@@ -124,22 +186,32 @@ public class Sprite2asm {
         return bits != 0;
     }
 
-    private void appendSprite(StringBuilder sb, byte[] sprite) {
-        boolean first = true;
-        for (int i = 0; i < 64; i++) {
-            if (first) {
-                sb.append(PREFIX);
-                sb.append(" ");
-                first = false;
-            } else {
-                sb.append(",");
-            }
-            sb.append(String.format("$%1$02x", sprite[i]));
-            if (i == 20 || i == 41 || i == 62 || i == 63) {
+    private void appendByteRows(StringBuilder sb, byte[] input, int len, int wrap) {
+        int i = 0;
+        while (i < len) {
+            sb.append(i % wrap == 0 ? PREFIX : ",");
+            sb.append(String.format("$%1$02x", input[i++]));
+            if (i % wrap == 0) {
                 sb.append("\n");
-                first = true;
             }
         }
+        if (i % wrap != 0) {
+            sb.append("\n");
+        }
+    }
+
+    /** lookup char in charset, returns 'count' if not found */
+    private int findInCharset(byte[] curChar, byte[] charset, int count) {
+        int i = 0;
+        while (i < count) {
+            int j = 0;
+            while (j < 8 && curChar[j] == charset[i * 8 + j])
+                j++;
+            if (j == 8)
+                return i;
+            i++;
+        }
+        return i;
     }
 
 }
